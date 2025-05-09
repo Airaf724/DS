@@ -1,112 +1,90 @@
 #include <mpi.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-// size of array
-#define n 10
-int a[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-// Temporary array for slave process
-int a2[1000];
+
 int main(int argc, char *argv[])
 {
-    int pid, np,
-        elements_per_process,
-        n_elements_recieved;
-    // np -> no. of processes
-    // pid -> process id
+    int np, pid;
     MPI_Status status;
-    // Creation of parallel processes
+
     MPI_Init(&argc, &argv);
-    // find out process ID,
-    // and how many processes were started
     MPI_Comm_rank(MPI_COMM_WORLD, &pid);
     MPI_Comm_size(MPI_COMM_WORLD, &np);
-    // master process
+
+    int n = 8;
+    int a[8] = {1, 2, 3, 4, 5, 6, 7, 8}; // example array
+    int elements_per_process = n / np;
+    int partial_sum = 0;
+
     if (pid == 0)
     {
-        int index, i;
-        elements_per_process = n / np;
+        // Server process
+        int index = 0;
 
-        // check if more than 1 processes are run
-        if (np > 1)
+        for (int i = 1; i < np; i++)
         {
-            // distributes the portion of array
-            // to child processes to calculate
-            // their partial sums
-
-            for (i = 1; i < np - 1; i++)
-            {
-                index = i * elements_per_process;
-                MPI_Send(&elements_per_process,
-                         1, MPI_INT, i, 0,
-                         MPI_COMM_WORLD);
-                MPI_Send(&a[index],
-                         elements_per_process,
-                         MPI_INT, i, 0,
-                         MPI_COMM_WORLD);
-                printf("Server sending the elements to client: %d\n", i);
-            }
-
-            // last process adds remaining elements
             index = i * elements_per_process;
-            int elements_left = n - index;
-            MPI_Send(&elements_left,
-                     1, MPI_INT,
-                     i, 0,
-                     MPI_COMM_WORLD);
-            MPI_Send(&a[index],
-                     elements_left,
-                     MPI_INT, i, 0,
-                     MPI_COMM_WORLD);
-            printf("Server sending the elements to client: %d\n", i);
+            int elements_to_send = (i == np - 1) ? (n - index) : elements_per_process;
+
+            // Send number of elements and elements to client
+            MPI_Send(&elements_to_send, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            MPI_Send(&a[index], elements_to_send, MPI_INT, i, 0, MPI_COMM_WORLD);
+
+            printf("Server sent %d elements to process %d: ", elements_to_send, i);
+            for (int j = 0; j < elements_to_send; j++)
+            {
+                printf("%d ", a[index + j]);
+            }
+            printf("\n");
         }
 
-        // master process add its own sub array
-        int sum = 0;
-        for (i = 0; i < elements_per_process; i++)
-            sum += a[i];
-        printf(" Partial sum of the server : %d\n", sum);
-
-        // collects partial sums from other processes
-        int tmp;
-        for (i = 1; i < np; i++)
+        // Partial sum by server (first chunk)
+        for (int i = 0; i < elements_per_process; i++)
         {
-            MPI_Recv(&tmp, 1, MPI_INT,
-                     MPI_ANY_SOURCE, 0,
-                     MPI_COMM_WORLD,
-                     &status);
-            int sender = status.MPI_SOURCE;
-            sum += tmp;
+            partial_sum += a[i];
         }
-        // prints the final sum of array
-        printf("Sum of array is : %d\n", sum);
-    }
+        printf("Server computed partial sum: %d from elements: ", partial_sum);
+        for (int i = 0; i < elements_per_process; i++)
+        {
+            printf("%d ", a[i]);
+        }
+        printf("\n");
 
-    // slave processes
+        // Receive partial sums from clients
+        int tmp = 0;
+        for (int i = 1; i < np; i++)
+        {
+            MPI_Recv(&tmp, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            printf("Server received partial sum %d from process %d\n", tmp, status.MPI_SOURCE);
+            partial_sum += tmp;
+        }
+
+        printf("\n✅ Total sum of array: %d\n", partial_sum);
+    }
     else
     {
-        MPI_Recv(&n_elements_recieved,
-                 1, MPI_INT, 0, 0,
-                 MPI_COMM_WORLD,
-                 &status);
-        // stores the received array segment
-        // in local array a2
-        MPI_Recv(&a2, n_elements_recieved,
-                 MPI_INT, 0, 0,
-                 MPI_COMM_WORLD,
-                 &status);
-        printf("Client receiving the elements from server: %d\n", pid);
-        // calculates its partial sum
-        int partial_sum = 0;
-        for (int i = 0; i < n_elements_recieved; i++)
-            partial_sum += a2[i];
-        printf("Sum of array for process %d is: %d\n", pid, partial_sum);
-        // sends the partial sum to the root process
-        MPI_Send(&partial_sum, 1, MPI_INT,
-                 0, 0, MPI_COMM_WORLD);
+        // Client processes
+        int n_elements_received = 0;
+        MPI_Recv(&n_elements_received, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
+        int received_data[n_elements_received];
+        MPI_Recv(&received_data, n_elements_received, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
+
+        printf("Client %d received %d elements: ", pid, n_elements_received);
+        for (int i = 0; i < n_elements_received; i++)
+        {
+            printf("%d ", received_data[i]);
+        }
+        printf("\n");
+
+        for (int i = 0; i < n_elements_received; i++)
+        {
+            partial_sum += received_data[i];
+        }
+
+        printf("Client %d computed partial sum: %d\n", pid, partial_sum);
+
+        MPI_Send(&partial_sum, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
     }
 
-    // cleans up all MPI state before exit of process
     MPI_Finalize();
     return 0;
 }
